@@ -33,7 +33,7 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 http-body-util = "0.1.2"
-hyper = { workspace = true }
+hyper.workspace = true
 futures = { workspace = true }
 include_dir = "0.7.4"
 opentelemetry = { workspace = true }
@@ -50,16 +50,15 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 xdg = { workspace = true }
+hyper-util = "0.1.10"
+tower-service = "0.3.3"
+tower-http = "0.6.2"
 
-# Sozu builds with simd support by default, but it only works on x86_64
+[target.'cfg(target_os = "windows")'.dependencies]
+axum = {workspace = true}
+tower = "0.5.2"
 
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-sozu-command-lib = { workspace = true }
-sozu-lib = { workspace = true }
 
-[target.'cfg(not(target_arch = "x86_64"))'.dependencies]
-sozu-command-lib = { workspace = true, default-features = false }
-sozu-lib = { workspace = true, default-features = false }
 
 [dev-dependencies]
 test-r = { workspace = true }
