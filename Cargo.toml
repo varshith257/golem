@@ -26,6 +26,7 @@ members = [
 ]
 
 exclude = [
+    "golem-gui/src-tauri",
     "test-components/shopping-cart",
     "test-components/write-stdout",
     "test-components/blob-store-service",
