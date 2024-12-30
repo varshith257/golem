@@ -71,14 +71,14 @@ pub async fn create_api_definition(
             "security": "none",
             "binding": {
                 "componentId": {
-                    "componentId": "616ccd92-d666-4180-8349-8d125b269fac", //just for reference
+                    "componentId": "616ccd92-d666-4180-8349-8d125b269fac",
                     "version": 0
                 },
                 "workerName": "worker_name",
                 "bindingType": "default"
             }
         }
-    ]
+    ],
 
             "draft": true,
         });
@@ -156,18 +156,18 @@ pub async fn delete_api_definition(id: String, version: String) -> Result<String
     }
 }
 
-#[tokio::main]
-async fn main() {
-    // Test the create_api_definition function
-    let result = create_api_definition(
-        "TestProject".to_string(),
-        "TestAPI".to_string(),
-        "0.1.0".to_string(),
-    )
-    .await;
+// #[tokio::main]
+// async fn main() {
+//     // Test the create_api_definition function
+//     let result = create_api_definition(
+//         "TestProject".to_string(),
+//         "TestAPI".to_string(),
+//         "0.1.0".to_string(),
+//     )
+//     .await;
 
-    match result {
-        Ok(success) => println!("{}", success),
-        Err(error) => eprintln!("Error: {}", error),
-    }
-}
+//     match result {
+//         Ok(success) => println!("{}", success),
+//         Err(error) => eprintln!("Error: {}", error),
+//     }
+// }
