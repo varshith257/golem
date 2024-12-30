@@ -1,30 +1,34 @@
 import { useEffect, useState } from "react";
 import reactLogo from "./assets/react.svg";
+// import { invoke } from "@tauri-apps/api/core";
 import { invoke } from "@tauri-apps/api/core";
+
 import "./App.css";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
-  const [apis, setApis] = useState<unknown>(null);
+  const [apis, setApis] = useState("");
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+    // setGreetMsg(await invoke("greet1", { name: `testing the ${name}` }));
+    console.log("invoke in=============>", invoke);
+
+    setGreetMsg(await invoke?.("greet1", { name: `testing the def ${name}` }));
   }
 
   useEffect(()=>{
     (async()=>{
 
-        const response = await invoke("list_api_definitions");
+      const response = await invoke?.("list_api_definitions", {});
 
-        console.log("response==========>", response);
-        setApis(response);
+      console.log("Response=====>", response);
 
     })()
-  })
+  }, [greetMsg])
 
-  console.log("apis=============>", apis);
+  console.log("invoke=============>", invoke);
 
   return (
     <main className="container">

@@ -6,6 +6,12 @@ use tauri::command;
 use tauri::Manager;
 use tracing::{error, info};
 
+
+// #[command]
+// fn greet(name: &str) -> String {
+//     format!("Hello, {}!", name)
+// }
+
 #[command]
 pub async fn upload_openapi_definition(file_path: String) -> Result<String, String> {
     let url = "http://localhost:9881/v1/api/definitions/import";
@@ -28,24 +34,47 @@ pub async fn upload_openapi_definition(file_path: String) -> Result<String, Stri
     }
 }
 
+// #[command]
+// pub async fn list_api_definitions(api_definition_id: Option<String>) -> Result<String, String> {
+//     println!("enteirgn this=======>");
+//     let url = match api_definition_id {
+//         Some(id) => format!(
+//             "http://localhost:9881/v1/api/definitions?api-definition-id={}",
+//             id
+//         ),
+//         None => "http://localhost:9881/v1/api/definitions".to_string(),
+//     };
+//     let client = reqwest::Client::new();
+//     let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+//     if response.status().is_success() {
+//         Ok(response
+//             .text()
+//             .await
+//             .unwrap_or_else(|_| "Success but empty response".to_string()))
+//     } else {
+//         Err(format!(
+//             "Failed to list API definitions: {:?}",
+//             response.text().await
+//         ))
+//     }
+// }
+
+
 #[command]
-pub async fn list_api_definitions(api_definition_id: Option<String>) -> Result<String, String> {
-    println!("enteirgn this=======>");
-    let url = match api_definition_id {
-        Some(id) => format!(
-            "http://localhost:9881/v1/api/definitions?api-definition-id={}",
-            id
-        ),
-        None => "http://localhost:9881/v1/api/definitions".to_string(),
-    };
+pub async fn list_api_definitions() -> Result<Value, String> {
+    println!("Entering this=======>");
+    let url = "http://localhost:9881/v1/api/definitions".to_string();
+
     let client = reqwest::Client::new();
     let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
 
     if response.status().is_success() {
-        Ok(response
-            .text()
+        let result: Value = response
+            .json::<Value>()
             .await
-            .unwrap_or_else(|_| "Success but empty response".to_string()))
+            .map_err(|e| format!("Failed to deserialize JSON: {}", e))?;
+        Ok(result)
     } else {
         Err(format!(
             "Failed to list API definitions: {:?}",
@@ -53,6 +82,26 @@ pub async fn list_api_definitions(api_definition_id: Option<String>) -> Result<S
         ))
     }
 }
+// pub async fn list_api_definitions() -> Result<Value, String> {
+//     println!("enteirgn this=======>");
+//     let url = "http://localhost:9881/v1/api/definitions".to_string();
+
+//     let client = reqwest::Client::new();
+//     let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+
+//     if response.status().is_success(){
+//         let result:Value = response.json();
+//         // Ok(response
+//         //     .text()
+//             .await
+//             .unwrap_or_else(|_| "Success but empty response".to_string()).Ok(result);
+//     } else {
+//         Err(format!(
+//             "Failed to list API definitions: {:?}",
+//             response.text().await
+//         ))
+//     }
+// }
 
 #[command]
 pub async fn create_api_definition(
