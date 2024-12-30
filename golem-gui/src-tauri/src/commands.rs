@@ -8,7 +8,7 @@ use tracing::{error, info};
 
 #[command]
 pub async fn upload_openapi_definition(file_path: String) -> Result<String, String> {
-    let url = "http://localhost:8000/v1/api/definitions/import";
+    let url = "http://localhost:9881/v1/api/definitions/import";
     let openapi_json = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
     let client = reqwest::Client::new();
     let response = client
@@ -30,12 +30,13 @@ pub async fn upload_openapi_definition(file_path: String) -> Result<String, Stri
 
 #[command]
 pub async fn list_api_definitions(api_definition_id: Option<String>) -> Result<String, String> {
+    println!("enteirgn this=======>");
     let url = match api_definition_id {
         Some(id) => format!(
-            "http://localhost:8000/v1/api/definitions?api-definition-id={}",
+            "http://localhost:9881/v1/api/definitions?api-definition-id={}",
             id
         ),
-        None => "http://localhost:8000/v1/api/definitions".to_string(),
+        None => "http://localhost:9881/v1/api/definitions".to_string(),
     };
     let client = reqwest::Client::new();
     let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
@@ -59,7 +60,7 @@ pub async fn create_api_definition(
     api_name: String,
     version: String,
 ) -> Result<String, String> {
-    let url = "http://localhost:8000/v1/api/definitions";
+    let url = "http://localhost:9881/v1/api/definitions";
 
     let api_definition = json!({
             "id": api_name,
@@ -112,7 +113,7 @@ pub async fn update_api_definition(
     updated_definition: String,
 ) -> Result<String, String> {
     let url = format!(
-        "http://localhost:8000/v1/api/definitions/{}/{}",
+        "http://localhost:9881/v1/api/definitions/{}/{}",
         id, version
     );
     let client = reqwest::Client::new();
@@ -136,7 +137,7 @@ pub async fn update_api_definition(
 #[command]
 pub async fn delete_api_definition(id: String, version: String) -> Result<String, String> {
     let url = format!(
-        "http://localhost:8000/v1/api/definitions/{}/{}",
+        "http://localhost:9881/v1/api/definitions/{}/{}",
         id, version
     );
     let client = reqwest::Client::new();
