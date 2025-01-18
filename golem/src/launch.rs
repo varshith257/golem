@@ -116,7 +116,8 @@ pub async fn launch_golem_services(args: &LaunchArgs) -> Result<(), anyhow::Erro
         healthcheck_port,
         &all_run_details,
         &mut join_set,
-    )?;
+    )
+    .await?;
 
     while let Some(res) = join_set.join_next().await {
         res??;

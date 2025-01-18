@@ -12,154 +12,104 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Reverse proxy implementation for Golem's single executable mode.
 use anyhow::Context;
-use sozu_command_lib::proto::command::WorkerResponse;
-use sozu_command_lib::{
-    channel::Channel,
-    config::ListenerBuilder,
-    proto::command::{
-        request::RequestType, AddBackend, Cluster, LoadBalancingAlgorithms, PathRule,
-        RequestHttpFrontend, RulePosition, SocketAddress, WorkerRequest,
-    },
-};
-use std::net::Ipv4Addr;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::{service::service_fn, Request};
+use hyper_reverse_proxy::call as reverse_proxy;
+use hyper_util::{rt::TokioExecutor, server::conn::auto::Builder};
+use regex::Regex;
+use std::net::{Ipv4Addr, SocketAddr};
+use tokio::sync::oneshot;
 use tokio::task::JoinSet;
+use tower::make::Shared;
 use tracing::info;
 
 use crate::AllRunDetails;
 
-pub fn start_proxy(
+pub async fn start_proxy(
     listener_addr: &str,
     listener_port: u16,
     healthcheck_port: u16,
     all_run_details: &AllRunDetails,
     join_set: &mut JoinSet<Result<(), anyhow::Error>>,
-) -> Result<Channel<WorkerRequest, WorkerResponse>, anyhow::Error> {
+) -> anyhow::Result<()> {
     info!("Starting proxy");
 
     let ipv4_addr: Ipv4Addr = listener_addr.parse().context(format!(
         "Failed at parsing the listener host address {}",
         listener_addr
     ))?;
-    let listener_socket_addr = SocketAddress::new_v4(
-        ipv4_addr.octets()[0],
-        ipv4_addr.octets()[1],
-        ipv4_addr.octets()[2],
-        ipv4_addr.octets()[3],
-        listener_port,
+    let listener_socket_addr = SocketAddr::new(ipv4_addr.into(), listener_port);
+
+    let health_backend = format!("http://{}:{}", listener_addr, healthcheck_port);
+    let worker_backend = format!(
+        "http://{}:{}",
+        listener_addr, all_run_details.worker_service.http_port
     );
-    let http_listener = ListenerBuilder::new_http(listener_socket_addr).to_http(None)?;
+    let component_backend = format!(
+        "http://{}:{}",
+        listener_addr, all_run_details.component_service.http_port
+    );
 
-    let (mut command_channel, proxy_channel) =
-        Channel::generate(1000, 10000).with_context(|| "should create a channel")?;
+    let re_connect = Regex::new(r"^/v1/components/[^/]+/workers/[^/]+/connect$").unwrap();
+    let re_workers = Regex::new(r"^/v1/components/[^/]+/workers").unwrap();
+    let re_invoke = Regex::new(r"^/v1/components/[^/]+/invoke(?:-and-await)?$").unwrap();
 
-    let mut dispatch = |request| {
-        command_channel.write_message(&request)?;
-        let response = command_channel.read_message();
-        info!("Proxy response: {:?}", response);
-        Ok::<(), anyhow::Error>(())
-    };
+    let service = Shared::new(service_fn(move |req: Request<hyper::body::Incoming>| {
+        let path = req.uri().path().to_string();
 
-    let _join_handle = join_set.spawn_blocking(move || {
-        let span = tracing::info_span!("proxy");
-        let _enter = span.enter();
-        let max_buffers = 500;
-        let buffer_size = 16384;
-        sozu_lib::http::testing::start_http_worker(
-            http_listener,
-            proxy_channel,
-            max_buffers,
-            buffer_size,
-        )
+        // Routing:
+        // 1) equals("/healthcheck"), equals("/metrics") -> health
+        // 2) regex("/v1/components/[^/]+/workers/[^/]+/connect$") -> worker
+        // 3) prefix("/v1/api") -> worker
+        // 4) regex("/v1/components/[^/]+/workers") -> worker
+        // 5) regex("/v1/components/[^/]+/invoke") -> worker
+        // 6) regex("/v1/components/[^/]+/invoke-and-await") -> worker
+        // 7) prefix("/v1/components") -> component
+        // 8) prefix("/") -> component
+
+        let target = if path == "/healthcheck" || path == "/metrics" {
+            &health_backend
+        } else if re_connect.is_match(&path) {
+            &worker_backend
+        } else if path.starts_with("/v1/api") {
+            &worker_backend
+        } else if re_workers.is_match(&path) {
+            &worker_backend
+        } else if re_invoke.is_match(&path) {
+            &worker_backend
+        } else {
+            &component_backend
+        };
+
+        let (parts, body) = req.into_parts();
+        let new_body = body.map_frame(|frame| frame.map_data(|data| Bytes::copy_from_slice(&data)));
+        let new_req = Request::from_parts(parts, new_body);
+
+        reverse_proxy(ipv4_addr, target, new_req)
+    }));
+
+    let listener = tokio::net::TcpListener::bind(listener_socket_addr).await?;
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    join_set.spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await?;
+            let service = service.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = Builder::new(TokioExecutor::new())
+                    .serve_connection(socket, service)
+                    .await
+                {
+                    tracing::error!("Proxy connection error: {}", e);
+                }
+            });
+        }
     });
 
-    let component_backend = "golem-component";
-    let worker_backend = "golem-worker";
-    let health_backend = "golem-health";
-
-    // set up the clusters. We'll have one per service with a single backend per cluster
-    {
-        let mut add_backend = |(name, port): (&str, u16)| {
-            dispatch(WorkerRequest {
-                id: format!("add-{name}-cluster"),
-                content: RequestType::AddCluster(Cluster {
-                    cluster_id: name.to_string(),
-                    sticky_session: false,
-                    https_redirect: false,
-                    load_balancing: LoadBalancingAlgorithms::Random as i32,
-                    ..Default::default()
-                })
-                .into(),
-            })?;
-
-            dispatch(WorkerRequest {
-                id: format!("add-{name}-backend"),
-                content: RequestType::AddBackend(AddBackend {
-                    cluster_id: name.to_string(),
-                    backend_id: name.to_string(),
-                    address: SocketAddress::new_v4(
-                        ipv4_addr.octets()[0],
-                        ipv4_addr.octets()[1],
-                        ipv4_addr.octets()[2],
-                        ipv4_addr.octets()[3],
-                        port,
-                    ),
-                    ..Default::default()
-                })
-                .into(),
-            })
-        };
-
-        add_backend((health_backend, healthcheck_port))?;
-        add_backend((
-            component_backend,
-            all_run_details.component_service.http_port,
-        ))?;
-        add_backend((worker_backend, all_run_details.worker_service.http_port))?;
-    }
-
-    // set up routing
-    {
-        let mut route_counter = -1;
-        let mut add_route = |(path, cluster_id): (PathRule, &str)| {
-            route_counter += 1;
-            dispatch(WorkerRequest {
-                id: format!("add-golem-frontend-${route_counter}"),
-                content: RequestType::AddHttpFrontend(RequestHttpFrontend {
-                    cluster_id: Some(cluster_id.to_string()),
-                    address: listener_socket_addr,
-                    hostname: "*".to_string(),
-                    path,
-                    position: RulePosition::Post.into(),
-                    ..Default::default()
-                })
-                .into(),
-            })
-        };
-
-        add_route((PathRule::equals("/healthcheck"), health_backend))?;
-        add_route((PathRule::equals("/metrics"), health_backend))?;
-
-        add_route((
-            PathRule::regex("/v1/components/[^/]+/workers/[^/]+/connect$"),
-            worker_backend,
-        ))?;
-        add_route((PathRule::prefix("/v1/api"), worker_backend))?;
-        add_route((
-            PathRule::regex("/v1/components/[^/]+/workers"),
-            worker_backend,
-        ))?;
-        add_route((
-            PathRule::regex("/v1/components/[^/]+/invoke"),
-            worker_backend,
-        ))?;
-        add_route((
-            PathRule::regex("/v1/components/[^/]+/invoke-and-await"),
-            worker_backend,
-        ))?;
-        add_route((PathRule::prefix("/v1/components"), component_backend))?;
-        add_route((PathRule::prefix("/"), component_backend))?;
-    }
-
-    Ok(command_channel)
+    shutdown_rx.await.context("Shutdown signal received")?;
+    Ok(())
 }
