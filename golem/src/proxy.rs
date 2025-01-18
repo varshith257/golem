@@ -14,7 +14,8 @@
 
 /// Reverse proxy implementation for Golem's single executable mode.
 use anyhow::Context;
-use hyper::body::Incoming;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
 use hyper::{service::service_fn, Request};
 use hyper_reverse_proxy::call as reverse_proxy;
 use hyper_util::{rt::TokioExecutor, server::conn::auto::Builder};
@@ -56,7 +57,7 @@ pub async fn start_proxy(
     let re_workers = Regex::new(r"^/v1/components/[^/]+/workers").unwrap();
     let re_invoke = Regex::new(r"^/v1/components/[^/]+/invoke(?:-and-await)?$").unwrap();
 
-    let service = Shared::new(service_fn(move |req: Request<Incoming>| {
+    let service = Shared::new(service_fn(move |req: Request<hyper::body::Incoming>| {
         let path = req.uri().path().to_string();
 
         // Routing:
@@ -83,18 +84,30 @@ pub async fn start_proxy(
             &component_backend
         };
 
-        reverse_proxy(listener_addr, target, req)
+        let (parts, body) = req.into_parts();
+        let new_body = body.map_frame(|frame| frame.map_data(|data| Bytes::copy_from_slice(&data)));
+        let new_req = Request::from_parts(parts, new_body);
+
+        reverse_proxy(ipv4_addr, target, new_req)
     }));
 
-    let server = Builder::new(TokioExecutor::new()).serve(listener_socket_addr, service)?;
+    let listener = tokio::net::TcpListener::bind(listener_socket_addr).await?;
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     join_set.spawn(async move {
-        if let Err(e) = server.await {
-            tracing::error!("Proxy server error: {}", e);
+        loop {
+            let (socket, _) = listener.accept().await?;
+            let service = service.clone();
+
+            tokio::spawn(async move {
+                if let Err(e) = Builder::new(TokioExecutor::new())
+                    .serve_connection(socket, service)
+                    .await
+                {
+                    tracing::error!("Proxy connection error: {}", e);
+                }
+            });
         }
-        let _ = shutdown_tx.send(());
-        Ok(())
     });
 
     shutdown_rx.await.context("Shutdown signal received")?;
