@@ -14,9 +14,10 @@
 
 /// Reverse proxy implementation for Golem's single executable mode.
 use anyhow::Context;
-use hyper::body::Body;
-use hyper::{server::conn::Http, service::service_fn, Request};
+use hyper::body::Incoming;
+use hyper::{service::service_fn, Request};
 use hyper_reverse_proxy::call as reverse_proxy;
+use hyper_util::{rt::TokioExecutor, server::conn::auto::Builder};
 use regex::Regex;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::sync::oneshot;
@@ -55,7 +56,7 @@ pub async fn start_proxy(
     let re_workers = Regex::new(r"^/v1/components/[^/]+/workers").unwrap();
     let re_invoke = Regex::new(r"^/v1/components/[^/]+/invoke(?:-and-await)?$").unwrap();
 
-    let service = Shared::new(service_fn(move |req: Request<Body>| {
+    let service = Shared::new(service_fn(move |req: Request<Incoming>| {
         let path = req.uri().path().to_string();
 
         // Routing:
@@ -85,7 +86,7 @@ pub async fn start_proxy(
         reverse_proxy(listener_addr, target, req)
     }));
 
-    let server = Http::new().serve_addr(&listener_socket_addr, service)?;
+    let server = Builder::new(TokioExecutor::new()).serve(listener_socket_addr, service)?;
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     join_set.spawn(async move {

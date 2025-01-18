@@ -3511,6 +3511,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.5.2",
  "hyper-reverse-proxy",
+ "hyper-util",
  "include_dir",
  "opentelemetry 0.27.1",
  "opentelemetry-prometheus 0.27.0",
@@ -3525,6 +3526,7 @@ dependencies = [
  "tempfile",
  "test-r",
  "tokio",
+ "tower 0.5.2",
  "tracing",
  "xdg",
 ]

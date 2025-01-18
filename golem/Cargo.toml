@@ -51,6 +51,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 xdg = { workspace = true }
 hyper-reverse-proxy = "0.5.1"
+tower = "0.5.2"
+hyper-util = "0.1.10"
 
 [dev-dependencies]
 test-r = { workspace = true }
