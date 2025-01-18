@@ -13,15 +13,15 @@
 // limitations under the License.
 
 /// Reverse proxy implementation for Golem's single executable mode.
-
 use anyhow::Context;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
+use hyper::body::Body;
+use hyper::{server::conn::Http, service::service_fn, Request};
 use hyper_reverse_proxy::call as reverse_proxy;
 use regex::Regex;
 use std::net::{Ipv4Addr, SocketAddr};
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
+use tower::make::Shared;
 use tracing::info;
 
 use crate::AllRunDetails;
@@ -55,51 +55,39 @@ pub async fn start_proxy(
     let re_workers = Regex::new(r"^/v1/components/[^/]+/workers").unwrap();
     let re_invoke = Regex::new(r"^/v1/components/[^/]+/invoke(?:-and-await)?$").unwrap();
 
-    let make_svc = make_service_fn(move |_conn| {
-        let health_backend = health_backend.clone();
-        let worker_backend = worker_backend.clone();
-        let component_backend = component_backend.clone();
+    let service = Shared::new(service_fn(move |req: Request<Body>| {
+        let path = req.uri().path().to_string();
 
-        let re_connect = re_connect.clone();
-        let re_workers = re_workers.clone();
-        let re_invoke = re_invoke.clone();
+        // Routing:
+        // 1) equals("/healthcheck"), equals("/metrics") -> health
+        // 2) regex("/v1/components/[^/]+/workers/[^/]+/connect$") -> worker
+        // 3) prefix("/v1/api") -> worker
+        // 4) regex("/v1/components/[^/]+/workers") -> worker
+        // 5) regex("/v1/components/[^/]+/invoke") -> worker
+        // 6) regex("/v1/components/[^/]+/invoke-and-await") -> worker
+        // 7) prefix("/v1/components") -> component
+        // 8) prefix("/") -> component
 
-        async move {
-            Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| {
-                let path = req.uri().path().to_string();
+        let target = if path == "/healthcheck" || path == "/metrics" {
+            &health_backend
+        } else if re_connect.is_match(&path) {
+            &worker_backend
+        } else if path.starts_with("/v1/api") {
+            &worker_backend
+        } else if re_workers.is_match(&path) {
+            &worker_backend
+        } else if re_invoke.is_match(&path) {
+            &worker_backend
+        } else {
+            &component_backend
+        };
 
-                // Routing:
-                // 1) equals("/healthcheck"), equals("/metrics") -> health
-                // 2) regex("/v1/components/[^/]+/workers/[^/]+/connect$") -> worker
-                // 3) prefix("/v1/api") -> worker
-                // 4) regex("/v1/components/[^/]+/workers") -> worker
-                // 5) regex("/v1/components/[^/]+/invoke") -> worker
-                // 6) regex("/v1/components/[^/]+/invoke-and-await") -> worker
-                // 7) prefix("/v1/components") -> component
-                // 8) prefix("/") -> component
+        reverse_proxy(listener_addr, target, req)
+    }));
 
-                let target = if path == "/healthcheck" || path == "/metrics" {
-                    &health_backend
-                } else if re_connect.is_match(&path) {
-                    &worker_backend
-                } else if path.starts_with("/v1/api") {
-                    &worker_backend
-                } else if re_workers.is_match(&path) {
-                    &worker_backend
-                } else if re_invoke.is_match(&path) {
-                    &worker_backend
-                } else {
-                    &component_backend
-                };
+    let server = Http::new().serve_addr(&listener_socket_addr, service)?;
 
-                reverse_proxy(listener_addr, target, req)
-            }))
-        }
-    });
-
-    let server = Server::bind(&listener_socket_addr).serve(make_svc);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-
     join_set.spawn(async move {
         if let Err(e) = server.await {
             tracing::error!("Proxy server error: {}", e);
@@ -109,6 +97,5 @@ pub async fn start_proxy(
     });
 
     shutdown_rx.await.context("Shutdown signal received")?;
-
     Ok(())
 }
