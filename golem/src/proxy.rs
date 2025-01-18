@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reverse proxy implementation for Golem's single executable mode.
+/// Reverse proxy implementation for Golem's single executable mode.
 
 use anyhow::Context;
 use hyper::service::{make_service_fn, service_fn};
